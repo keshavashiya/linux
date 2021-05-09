@@ -7,7 +7,7 @@
  *
  * This file handle the PRNG
  *
- * You could find a link for the datasheet in Documentation/arm/sunxi/README
+ * You could find a link for the datasheet in Documentation/arm/sunxi.rst
  */
 #include "sun8i-ce.h"
 #include <linux/dma-mapping.h>
@@ -99,6 +99,7 @@ int sun8i_ce_prng_generate(struct crypto_rng *tfm, const u8 *src,
 	dma_iv = dma_map_single(ce->dev, ctx->seed, ctx->slen, DMA_TO_DEVICE);
 	if (dma_mapping_error(ce->dev, dma_iv)) {
 		dev_err(ce->dev, "Cannot DMA MAP IV\n");
+		err = -EFAULT;
 		goto err_iv;
 	}
 

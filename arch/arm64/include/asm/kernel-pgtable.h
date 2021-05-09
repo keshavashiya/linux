@@ -89,12 +89,6 @@
 #define INIT_DIR_SIZE (PAGE_SIZE * EARLY_PAGES(KIMAGE_VADDR, _end))
 #define IDMAP_DIR_SIZE		(IDMAP_PGTABLE_LEVELS * PAGE_SIZE)
 
-#ifdef CONFIG_ARM64_SW_TTBR0_PAN
-#define RESERVED_TTBR0_SIZE	(PAGE_SIZE)
-#else
-#define RESERVED_TTBR0_SIZE	(0)
-#endif
-
 /* Initial memory map size */
 #if ARM64_SWAPPER_USES_SECTION_MAPS
 #define SWAPPER_BLOCK_SHIFT	SECTION_SHIFT
@@ -142,7 +136,7 @@
  * has a direct correspondence, and needs to appear sufficiently aligned
  * in the virtual address space.
  */
-#if defined(CONFIG_SPARSEMEM_VMEMMAP) && ARM64_MEMSTART_SHIFT < SECTION_SIZE_BITS
+#if ARM64_MEMSTART_SHIFT < SECTION_SIZE_BITS
 #define ARM64_MEMSTART_ALIGN	(1UL << SECTION_SIZE_BITS)
 #else
 #define ARM64_MEMSTART_ALIGN	(1UL << ARM64_MEMSTART_SHIFT)

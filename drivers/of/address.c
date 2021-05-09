@@ -26,6 +26,7 @@ static struct of_bus *of_match_bus(struct device_node *np);
 static int __of_address_to_resource(struct device_node *dev,
 		const __be32 *addrp, u64 size, unsigned int flags,
 		const char *name, struct resource *r);
+static bool of_mmio_is_nonposted(struct device_node *np);
 
 /* Debug utility */
 #ifdef DEBUG
@@ -116,8 +117,11 @@ static unsigned int of_bus_pci_get_flags(const __be32 *addr)
 		flags |= IORESOURCE_IO;
 		break;
 	case 0x02: /* 32 bits */
-	case 0x03: /* 64 bits */
 		flags |= IORESOURCE_MEM;
+		break;
+
+	case 0x03: /* 64 bits */
+		flags |= IORESOURCE_MEM | IORESOURCE_MEM_64;
 		break;
 	}
 	if (w & 0x40000000)
@@ -847,6 +851,9 @@ static int __of_address_to_resource(struct device_node *dev,
 		return -EINVAL;
 	memset(r, 0, sizeof(struct resource));
 
+	if (of_mmio_is_nonposted(dev))
+		flags |= IORESOURCE_MEM_NONPOSTED;
+
 	r->start = taddr;
 	r->end = taddr + size - 1;
 	r->flags = flags;
@@ -857,6 +864,9 @@ static int __of_address_to_resource(struct device_node *dev,
 
 /**
  * of_address_to_resource - Translate device tree address and return as resource
+ * @dev:	Caller's Device Node
+ * @index:	Index into the array
+ * @r:		Pointer to resource array
  *
  * Note that if your address is a PIO address, the conversion will fail if
  * the physical address can't be internally converted to an IO token with
@@ -896,7 +906,10 @@ void __iomem *of_iomap(struct device_node *np, int index)
 	if (of_address_to_resource(np, index, &res))
 		return NULL;
 
-	return ioremap(res.start, resource_size(&res));
+	if (res.flags & IORESOURCE_MEM_NONPOSTED)
+		return ioremap_np(res.start, resource_size(&res));
+	else
+		return ioremap(res.start, resource_size(&res));
 }
 EXPORT_SYMBOL(of_iomap);
 
@@ -928,7 +941,11 @@ void __iomem *of_io_request_and_map(struct device_node *np, int index,
 	if (!request_mem_region(res.start, resource_size(&res), name))
 		return IOMEM_ERR_PTR(-EBUSY);
 
-	mem = ioremap(res.start, resource_size(&res));
+	if (res.flags & IORESOURCE_MEM_NONPOSTED)
+		mem = ioremap_np(res.start, resource_size(&res));
+	else
+		mem = ioremap(res.start, resource_size(&res));
+
 	if (!mem) {
 		release_mem_region(res.start, resource_size(&res));
 		return IOMEM_ERR_PTR(-ENOMEM);
@@ -1025,6 +1042,48 @@ out:
 #endif /* CONFIG_HAS_DMA */
 
 /**
+ * of_dma_get_max_cpu_address - Gets highest CPU address suitable for DMA
+ * @np: The node to start searching from or NULL to start from the root
+ *
+ * Gets the highest CPU physical address that is addressable by all DMA masters
+ * in the sub-tree pointed by np, or the whole tree if NULL is passed. If no
+ * DMA constrained device is found, it returns PHYS_ADDR_MAX.
+ */
+phys_addr_t __init of_dma_get_max_cpu_address(struct device_node *np)
+{
+	phys_addr_t max_cpu_addr = PHYS_ADDR_MAX;
+	struct of_range_parser parser;
+	phys_addr_t subtree_max_addr;
+	struct device_node *child;
+	struct of_range range;
+	const __be32 *ranges;
+	u64 cpu_end = 0;
+	int len;
+
+	if (!np)
+		np = of_root;
+
+	ranges = of_get_property(np, "dma-ranges", &len);
+	if (ranges && len) {
+		of_dma_range_parser_init(&parser, np);
+		for_each_of_range(&parser, &range)
+			if (range.cpu_addr + range.size > cpu_end)
+				cpu_end = range.cpu_addr + range.size - 1;
+
+		if (max_cpu_addr > cpu_end)
+			max_cpu_addr = cpu_end;
+	}
+
+	for_each_available_child_of_node(np, child) {
+		subtree_max_addr = of_dma_get_max_cpu_address(child);
+		if (max_cpu_addr > subtree_max_addr)
+			max_cpu_addr = subtree_max_addr;
+	}
+
+	return max_cpu_addr;
+}
+
+/**
  * of_dma_is_coherent - Check if device is coherent
  * @np:	device node
  *
@@ -1034,10 +1093,12 @@ out:
  */
 bool of_dma_is_coherent(struct device_node *np)
 {
-	struct device_node *node = of_node_get(np);
+	struct device_node *node;
 
 	if (IS_ENABLED(CONFIG_OF_DMA_DEFAULT_COHERENT))
 		return true;
+
+	node = of_node_get(np);
 
 	while (node) {
 		if (of_property_read_bool(node, "dma-coherent")) {
@@ -1050,3 +1111,31 @@ bool of_dma_is_coherent(struct device_node *np)
 	return false;
 }
 EXPORT_SYMBOL_GPL(of_dma_is_coherent);
+
+/**
+ * of_mmio_is_nonposted - Check if device uses non-posted MMIO
+ * @np:	device node
+ *
+ * Returns true if the "nonposted-mmio" property was found for
+ * the device's bus.
+ *
+ * This is currently only enabled on builds that support Apple ARM devices, as
+ * an optimization.
+ */
+static bool of_mmio_is_nonposted(struct device_node *np)
+{
+	struct device_node *parent;
+	bool nonposted;
+
+	if (!IS_ENABLED(CONFIG_ARCH_APPLE))
+		return false;
+
+	parent = of_get_parent(np);
+	if (!parent)
+		return false;
+
+	nonposted = of_property_read_bool(parent, "nonposted-mmio");
+
+	of_node_put(parent);
+	return nonposted;
+}

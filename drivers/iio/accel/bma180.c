@@ -959,17 +959,20 @@ static int bma180_data_rdy_trigger_set_state(struct iio_trigger *trig,
 	return bma180_set_new_data_intr_state(data, state);
 }
 
-static int bma180_trig_try_reen(struct iio_trigger *trig)
+static void bma180_trig_reen(struct iio_trigger *trig)
 {
 	struct iio_dev *indio_dev = iio_trigger_get_drvdata(trig);
 	struct bma180_data *data = iio_priv(indio_dev);
+	int ret;
 
-	return bma180_reset_intr(data);
+	ret = bma180_reset_intr(data);
+	if (ret)
+		dev_err(&data->client->dev, "failed to reset interrupt\n");
 }
 
 static const struct iio_trigger_ops bma180_trigger_ops = {
 	.set_trigger_state = bma180_data_rdy_trigger_set_state,
-	.try_reenable = bma180_trig_try_reen,
+	.reenable = bma180_trig_reen,
 };
 
 static int bma180_probe(struct i2c_client *client,
@@ -1041,7 +1044,7 @@ static int bma180_probe(struct i2c_client *client,
 	indio_dev->info = &bma180_info;
 
 	if (client->irq > 0) {
-		data->trig = iio_trigger_alloc("%s-dev%d", indio_dev->name,
+		data->trig = iio_trigger_alloc(dev, "%s-dev%d", indio_dev->name,
 			indio_dev->id);
 		if (!data->trig) {
 			ret = -ENOMEM;
@@ -1056,7 +1059,6 @@ static int bma180_probe(struct i2c_client *client,
 			goto err_trigger_free;
 		}
 
-		data->trig->dev.parent = dev;
 		data->trig->ops = &bma180_trigger_ops;
 		iio_trigger_set_drvdata(data->trig, indio_dev);
 		indio_dev->trig = iio_trigger_get(data->trig);

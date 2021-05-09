@@ -144,7 +144,7 @@ struct smb2_transform_hdr {
 } __packed;
 
 /* See MS-SMB2 2.2.42 */
-struct smb2_compression_transform_hdr {
+struct smb2_compression_transform_hdr_unchained {
 	__le32 ProtocolId;	/* 0xFC 'S' 'M' 'B' */
 	__le32 OriginalCompressedSegmentSize;
 	__le16 CompressionAlgorithm;
@@ -160,10 +160,17 @@ struct compression_payload_header {
 	__le16	CompressionAlgorithm;
 	__le16	Flags;
 	__le32	Length; /* length of compressed playload including field below if present */
-	/* __le32 OriginalPayloadSize; */ /* optional */
+	/* __le32 OriginalPayloadSize; */ /* optional, present when LZNT1, LZ77, LZ77+Huffman */
 } __packed;
 
 /* See MS-SMB2 2.2.42.2 */
+struct smb2_compression_transform_hdr_chained {
+	__le32 ProtocolId;	/* 0xFC 'S' 'M' 'B' */
+	__le32 OriginalCompressedSegmentSize;
+	/* struct compression_payload_header[] */
+} __packed;
+
+/* See MS-SMB2 2.2.42.2.2 */
 struct compression_pattern_payload_v1 {
 	__le16	Pattern;
 	__le16	Reserved1;
@@ -181,7 +188,11 @@ struct smb2_rdma_transform {
 	__le32 Reserved2;
 } __packed;
 
-struct smb2_rdma_encryption_transform {
+/* TransformType */
+#define SMB2_RDMA_TRANSFORM_TYPE_ENCRYPTION	0x0001
+#define SMB2_RDMA_TRANSFORM_TYPE_SIGNING	0x0002
+
+struct smb2_rdma_crypto_transform {
 	__le16	TransformType;
 	__le16	SignatureLength;
 	__le16	NonceLength;
@@ -286,7 +297,7 @@ struct smb2_negotiate_req {
 	__le32 NegotiateContextOffset; /* SMB3.1.1 only. MBZ earlier */
 	__le16 NegotiateContextCount;  /* SMB3.1.1 only. MBZ earlier */
 	__le16 Reserved2;
-	__le16 Dialects[1]; /* One dialect (vers=) at a time for now */
+	__le16 Dialects[4]; /* BB expand this if autonegotiate > 4 dialects */
 } __packed;
 
 /* Dialects */
@@ -333,12 +344,20 @@ struct smb2_neg_context {
 	/* Followed by array of data */
 } __packed;
 
-#define SMB311_SALT_SIZE			32
+#define SMB311_LINUX_CLIENT_SALT_SIZE			32
 /* Hash Algorithm Types */
 #define SMB2_PREAUTH_INTEGRITY_SHA512	cpu_to_le16(0x0001)
 #define SMB2_PREAUTH_HASH_SIZE 64
 
-#define MIN_PREAUTH_CTXT_DATA_LEN	(SMB311_SALT_SIZE + 6)
+/*
+ * SaltLength that the server send can be zero, so the only three required
+ * fields (all __le16) end up six bytes total, so the minimum context data len
+ * in the response is six bytes which accounts for
+ *
+ *      HashAlgorithmCount, SaltLength, and 1 HashAlgorithm.
+ */
+#define MIN_PREAUTH_CTXT_DATA_LEN 6
+
 struct smb2_preauth_neg_context {
 	__le16	ContextType; /* 1 */
 	__le16	DataLength;
@@ -346,7 +365,7 @@ struct smb2_preauth_neg_context {
 	__le16	HashAlgorithmCount; /* 1 */
 	__le16	SaltLength;
 	__le16	HashAlgorithms; /* HashAlgorithms[0] since only one defined */
-	__u8	Salt[SMB311_SALT_SIZE];
+	__u8	Salt[SMB311_LINUX_CLIENT_SALT_SIZE];
 } __packed;
 
 /* Encryption Algorithms Ciphers */
@@ -401,13 +420,29 @@ struct smb2_netname_neg_context {
 } __packed;
 
 /*
- * For rdma transform capabilities context see MS-SMB2 2.2.3.1.6
+ * For smb2_transport_capabilities context see MS-SMB2 2.2.3.1.5
  * and 2.2.4.1.5
+ */
+
+/* Flags */
+#define SMB2_ACCEPT_TRANSFORM_LEVEL_SECURITY	0x00000001
+
+struct smb2_transport_capabilities_context {
+	__le16	ContextType; /* 6 */
+	__le16  DataLength;
+	__u32	Reserved;
+	__le32	Flags;
+} __packed;
+
+/*
+ * For rdma transform capabilities context see MS-SMB2 2.2.3.1.6
+ * and 2.2.4.1.6
  */
 
 /* RDMA Transform IDs */
 #define SMB2_RDMA_TRANSFORM_NONE	0x0000
 #define SMB2_RDMA_TRANSFORM_ENCRYPTION	0x0001
+#define SMB2_RDMA_TRANSFORM_SIGNING	0x0002
 
 struct smb2_rdma_transform_capabilities_context {
 	__le16	ContextType; /* 7 */
@@ -416,8 +451,13 @@ struct smb2_rdma_transform_capabilities_context {
 	__le16	TransformCount;
 	__u16	Reserved1;
 	__u32	Reserved2;
-	__le16	RDMATransformIds[1];
+	__le16	RDMATransformIds[];
 } __packed;
+
+/*
+ * For signing capabilities context see MS-SMB2 2.2.3.1.7
+ * and 2.2.4.1.7
+ */
 
 /* Signing algorithms */
 #define SIGNING_ALG_HMAC_SHA256	0
@@ -626,7 +666,8 @@ struct smb2_tree_connect_rsp {
 #define SHI1005_FLAGS_ENABLE_HASH_V2			0x00004000
 #define SHI1005_FLAGS_ENCRYPT_DATA			0x00008000
 #define SMB2_SHAREFLAG_IDENTITY_REMOTING		0x00040000 /* 3.1.1 */
-#define SHI1005_FLAGS_ALL				0x0004FF33
+#define SMB2_SHAREFLAG_COMPRESS_DATA			0x00100000 /* 3.1.1 */
+#define SHI1005_FLAGS_ALL				0x0014FF33
 
 /* Possible share capabilities */
 #define SMB2_SHARE_CAP_DFS	cpu_to_le32(0x00000008) /* all dialects */
@@ -963,8 +1004,6 @@ struct crt_sd_ctxt {
 	struct create_context ccontext;
 	__u8	Name[8];
 	struct smb3_sd sd;
-	struct smb3_acl acl;
-	/* Followed by at least 4 ACEs */
 } __packed;
 
 
@@ -1384,7 +1423,11 @@ struct smb2_lock_req {
 	struct smb2_sync_hdr sync_hdr;
 	__le16 StructureSize; /* Must be 48 */
 	__le16 LockCount;
-	__le32 Reserved;
+	/*
+	 * The least significant four bits are the index, the other 28 bits are
+	 * the lock sequence number (0 to 64). See MS-SMB2 2.2.26
+	 */
+	__le32 LockSequenceNumber;
 	__u64  PersistentFileId; /* opaque endianness */
 	__u64  VolatileFileId; /* opaque endianness */
 	/* Followed by at least one */

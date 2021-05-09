@@ -11,9 +11,7 @@
 
 #include <linux/interrupt.h>
 #include <linux/v4l2-controls.h>
-#include <media/h264-ctrls.h>
-#include <media/mpeg2-ctrls.h>
-#include <media/vp8-ctrls.h>
+#include <media/v4l2-ctrls.h>
 #include <media/videobuf2-core.h>
 
 #define DEC_8190_ALIGN_MASK	0x07U
@@ -29,6 +27,7 @@ struct hantro_variant;
 
 /**
  * struct hantro_aux_buf - auxiliary DMA buffer for hardware data
+ *
  * @cpu:	CPU pointer to the buffer.
  * @dma:	DMA address of the buffer.
  * @size:	Size of the buffer.
@@ -43,6 +42,7 @@ struct hantro_aux_buf {
 
 /**
  * struct hantro_jpeg_enc_hw_ctx
+ *
  * @bounce_buffer:	Bounce buffer
  */
 struct hantro_jpeg_enc_hw_ctx {
@@ -54,6 +54,7 @@ struct hantro_jpeg_enc_hw_ctx {
 
 /**
  * struct hantro_h264_dec_ctrls
+ *
  * @decode:	Decode params
  * @scaling:	Scaling info
  * @sps:	SPS info
@@ -68,6 +69,7 @@ struct hantro_h264_dec_ctrls {
 
 /**
  * struct hantro_h264_dec_reflists
+ *
  * @p:		P reflist
  * @b0:		B0 reflist
  * @b1:		B1 reflist
@@ -80,6 +82,7 @@ struct hantro_h264_dec_reflists {
 
 /**
  * struct hantro_h264_dec_hw_ctx
+ *
  * @priv:	Private auxiliary buffer for hardware.
  * @dpb:	DPB
  * @reflists:	P/B0/B1 reflists
@@ -94,6 +97,7 @@ struct hantro_h264_dec_hw_ctx {
 
 /**
  * struct hantro_mpeg2_dec_hw_ctx
+ *
  * @qtable:		Quantization table
  */
 struct hantro_mpeg2_dec_hw_ctx {
@@ -101,7 +105,8 @@ struct hantro_mpeg2_dec_hw_ctx {
 };
 
 /**
- * struct hantro_vp8d_hw_ctx
+ * struct hantro_vp8_dec_hw_ctx
+ *
  * @segment_map:	Segment map buffer.
  * @prob_tbl:		Probability table buffer.
  */
@@ -142,6 +147,11 @@ struct hantro_codec_ops {
 
 /**
  * enum hantro_enc_fmt - source format ID for hardware registers.
+ *
+ * @RK3288_VPU_ENC_FMT_YUV420P: Y/CbCr 4:2:0 planar format
+ * @RK3288_VPU_ENC_FMT_YUV420SP: Y/CbCr 4:2:0 semi-planar format
+ * @RK3288_VPU_ENC_FMT_YUYV422: YUV 4:2:2 packed format (YUYV)
+ * @RK3288_VPU_ENC_FMT_UYVY422: YUV 4:2:2 packed format (UYVY)
  */
 enum hantro_enc_fmt {
 	RK3288_VPU_ENC_FMT_YUV420P = 0,
@@ -218,6 +228,6 @@ void rk3399_vpu_vp8_dec_run(struct hantro_ctx *ctx);
 int hantro_vp8_dec_init(struct hantro_ctx *ctx);
 void hantro_vp8_dec_exit(struct hantro_ctx *ctx);
 void hantro_vp8_prob_update(struct hantro_ctx *ctx,
-			    const struct v4l2_ctrl_vp8_frame_header *hdr);
+			    const struct v4l2_ctrl_vp8_frame *hdr);
 
 #endif /* HANTRO_HW_H_ */

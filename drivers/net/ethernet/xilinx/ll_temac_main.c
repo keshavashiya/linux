@@ -438,7 +438,7 @@ static void temac_do_set_mac_address(struct net_device *ndev)
 
 static int temac_init_mac_address(struct net_device *ndev, const void *address)
 {
-	ether_addr_copy(ndev->dev_addr, address);
+	memcpy(ndev->dev_addr, address, ETH_ALEN);
 	if (!is_valid_ether_addr(ndev->dev_addr))
 		eth_hw_addr_random(ndev);
 	temac_do_set_mac_address(ndev);
@@ -1351,8 +1351,7 @@ static int temac_probe(struct platform_device *pdev)
 	struct device_node *temac_np = dev_of_node(&pdev->dev), *dma_np;
 	struct temac_local *lp;
 	struct net_device *ndev;
-	struct resource *res;
-	const void *addr;
+	u8 addr[ETH_ALEN];
 	__be32 *p;
 	bool little_endian;
 	int rc = 0;
@@ -1500,13 +1499,11 @@ static int temac_probe(struct platform_device *pdev)
 		of_node_put(dma_np);
 	} else if (pdata) {
 		/* 2nd memory resource specifies DMA registers */
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-		lp->sdma_regs = devm_ioremap(&pdev->dev, res->start,
-						     resource_size(res));
-		if (!lp->sdma_regs) {
+		lp->sdma_regs = devm_platform_ioremap_resource(pdev, 1);
+		if (IS_ERR(lp->sdma_regs)) {
 			dev_err(&pdev->dev,
 				"could not map DMA registers\n");
-			return -ENOMEM;
+			return PTR_ERR(lp->sdma_regs);
 		}
 		if (pdata->dma_little_endian) {
 			lp->dma_in = temac_dma_in32_le;
@@ -1545,8 +1542,8 @@ static int temac_probe(struct platform_device *pdev)
 
 	if (temac_np) {
 		/* Retrieve the MAC address */
-		addr = of_get_mac_address(temac_np);
-		if (IS_ERR(addr)) {
+		rc = of_get_mac_address(temac_np, addr);
+		if (rc) {
 			dev_err(&pdev->dev, "could not find MAC address\n");
 			return -ENODEV;
 		}

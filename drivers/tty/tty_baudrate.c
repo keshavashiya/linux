@@ -8,6 +8,7 @@
 #include <linux/termios.h>
 #include <linux/tty.h>
 #include <linux/export.h>
+#include "tty.h"
 
 
 /*
@@ -222,6 +223,7 @@ EXPORT_SYMBOL_GPL(tty_termios_encode_baud_rate);
 
 /**
  *	tty_encode_baud_rate		-	set baud rate of the tty
+ *	@tty:   terminal device
  *	@ibaud: input baud rate
  *	@obaud: output baud rate
  *

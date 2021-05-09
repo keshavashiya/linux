@@ -64,7 +64,7 @@ static int crc_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	}
 
 	if (state->polarity != PWM_POLARITY_NORMAL)
-		return -EOPNOTSUPP;
+		return -EINVAL;
 
 	if (pwm_is_enabled(pwm) && !state->enabled) {
 		err = regmap_write(crc_pwm->regmap, BACKLIGHT_EN, 0);
@@ -168,7 +168,6 @@ static int crystalcove_pwm_probe(struct platform_device *pdev)
 
 	pwm->chip.dev = &pdev->dev;
 	pwm->chip.ops = &crc_pwm_ops;
-	pwm->chip.base = -1;
 	pwm->chip.npwm = 1;
 
 	/* get the PMIC regmap */

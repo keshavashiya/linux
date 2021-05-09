@@ -238,7 +238,6 @@ static struct i2c_driver pmbus_driver = {
 		   .name = "pmbus",
 		   },
 	.probe_new = pmbus_probe,
-	.remove = pmbus_do_remove,
 	.id_table = pmbus_id,
 };
 
@@ -247,3 +246,4 @@ module_i2c_driver(pmbus_driver);
 MODULE_AUTHOR("Guenter Roeck");
 MODULE_DESCRIPTION("Generic PMBus driver");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(PMBUS);

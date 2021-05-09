@@ -881,13 +881,13 @@ static void flush_pending_writes(struct r10conf *conf)
 
 		while (bio) { /* submit pending writes */
 			struct bio *next = bio->bi_next;
-			struct md_rdev *rdev = (void*)bio->bi_disk;
+			struct md_rdev *rdev = (void*)bio->bi_bdev;
 			bio->bi_next = NULL;
 			bio_set_dev(bio, rdev->bdev);
 			if (test_bit(Faulty, &rdev->flags)) {
 				bio_io_error(bio);
 			} else if (unlikely((bio_op(bio) ==  REQ_OP_DISCARD) &&
-					    !blk_queue_discard(bio->bi_disk->queue)))
+					    !blk_queue_discard(bio->bi_bdev->bd_disk->queue)))
 				/* Just ignore it */
 				bio_endio(bio);
 			else
@@ -1074,13 +1074,13 @@ static void raid10_unplug(struct blk_plug_cb *cb, bool from_schedule)
 
 	while (bio) { /* submit pending writes */
 		struct bio *next = bio->bi_next;
-		struct md_rdev *rdev = (void*)bio->bi_disk;
+		struct md_rdev *rdev = (void*)bio->bi_bdev;
 		bio->bi_next = NULL;
 		bio_set_dev(bio, rdev->bdev);
 		if (test_bit(Faulty, &rdev->flags)) {
 			bio_io_error(bio);
 		} else if (unlikely((bio_op(bio) ==  REQ_OP_DISCARD) &&
-				    !blk_queue_discard(bio->bi_disk->queue)))
+				    !blk_queue_discard(bio->bi_bdev->bd_disk->queue)))
 			/* Just ignore it */
 			bio_endio(bio);
 		else
@@ -1127,7 +1127,7 @@ static void raid10_read_request(struct mddev *mddev, struct bio *bio,
 	struct md_rdev *err_rdev = NULL;
 	gfp_t gfp = GFP_NOIO;
 
-	if (r10_bio->devs[slot].rdev) {
+	if (slot >= 0 && r10_bio->devs[slot].rdev) {
 		/*
 		 * This is an error retry, but we cannot
 		 * safely dereference the rdev in the r10_bio,
@@ -1200,8 +1200,7 @@ static void raid10_read_request(struct mddev *mddev, struct bio *bio,
 	read_bio->bi_private = r10_bio;
 
 	if (mddev->gendisk)
-	        trace_block_bio_remap(read_bio->bi_disk->queue,
-	                              read_bio, disk_devt(mddev->gendisk),
+	        trace_block_bio_remap(read_bio, disk_devt(mddev->gendisk),
 	                              r10_bio->sector);
 	submit_bio_noacct(read_bio);
 	return;
@@ -1250,11 +1249,10 @@ static void raid10_write_one_disk(struct mddev *mddev, struct r10bio *r10_bio,
 	mbio->bi_private = r10_bio;
 
 	if (conf->mddev->gendisk)
-		trace_block_bio_remap(mbio->bi_disk->queue,
-				      mbio, disk_devt(conf->mddev->gendisk),
+		trace_block_bio_remap(mbio, disk_devt(conf->mddev->gendisk),
 				      r10_bio->sector);
 	/* flush_pending_writes() needs access to the rdev so...*/
-	mbio->bi_disk = (void *)rdev;
+	mbio->bi_bdev = (void *)rdev;
 
 	atomic_inc(&r10_bio->remaining);
 
@@ -1307,7 +1305,8 @@ retry_wait:
 			int bad_sectors;
 			int is_bad;
 
-			/* Discard request doesn't care the write result
+			/*
+			 * Discard request doesn't care the write result
 			 * so it doesn't need to wait blocked disk here.
 			 */
 			if (!r10_bio->sectors)
@@ -1316,7 +1315,8 @@ retry_wait:
 			is_bad = is_badblock(rdev, dev_sector, r10_bio->sectors,
 					     &first_bad, &bad_sectors);
 			if (is_bad < 0) {
-				/* Mustn't write here until the bad block
+				/*
+				 * Mustn't write here until the bad block
 				 * is acknowledged
 				 */
 				atomic_inc(&rdev->nr_pending);
@@ -1508,30 +1508,14 @@ static void __make_request(struct mddev *mddev, struct bio *bio, int sectors)
 	r10_bio->mddev = mddev;
 	r10_bio->sector = bio->bi_iter.bi_sector;
 	r10_bio->state = 0;
-	memset(r10_bio->devs, 0, sizeof(r10_bio->devs[0]) * conf->geo.raid_disks);
+	r10_bio->read_slot = -1;
+	memset(r10_bio->devs, 0, sizeof(r10_bio->devs[0]) *
+			conf->geo.raid_disks);
 
 	if (bio_data_dir(bio) == READ)
 		raid10_read_request(mddev, bio, r10_bio);
 	else
 		raid10_write_request(mddev, bio, r10_bio);
-}
-
-static struct bio *raid10_split_bio(struct r10conf *conf,
-			struct bio *bio, sector_t sectors, bool want_first)
-{
-	struct bio *split;
-
-	split = bio_split(bio, sectors,	GFP_NOIO, &conf->bio_split);
-	bio_chain(split, bio);
-	allow_barrier(conf);
-	if (want_first) {
-		submit_bio_noacct(bio);
-		bio = split;
-	} else
-		submit_bio_noacct(split);
-	wait_barrier(conf);
-
-	return bio;
 }
 
 static void raid_end_discard_bio(struct r10bio *r10bio)
@@ -1574,7 +1558,8 @@ static void raid10_end_discard_request(struct bio *bio)
 	if (repl)
 		rdev = conf->mirrors[dev].replacement;
 	if (!rdev) {
-		/* raid10_remove_disk uses smp_mb to make sure rdev is set to
+		/*
+		 * raid10_remove_disk uses smp_mb to make sure rdev is set to
 		 * replacement before setting replacement to NULL. It can read
 		 * rdev first without barrier protect even replacment is NULL
 		 */
@@ -1586,7 +1571,8 @@ static void raid10_end_discard_request(struct bio *bio)
 	rdev_dec_pending(rdev, conf->mddev);
 }
 
-/* There are some limitations to handle discard bio
+/*
+ * There are some limitations to handle discard bio
  * 1st, the discard size is bigger than stripe_size*2.
  * 2st, if the discard bio spans reshape progress, we use the old way to
  * handle discard bio
@@ -1595,15 +1581,15 @@ static int raid10_handle_discard(struct mddev *mddev, struct bio *bio)
 {
 	struct r10conf *conf = mddev->private;
 	struct geom *geo = &conf->geo;
-	struct r10bio *r10_bio, *first_r10bio;
 	int far_copies = geo->far_copies;
 	bool first_copy = true;
-
+	struct r10bio *r10_bio, *first_r10bio;
+	struct bio *split;
 	int disk;
 	sector_t chunk;
 	unsigned int stripe_size;
+	unsigned int stripe_data_disks;
 	sector_t split_size;
-
 	sector_t bio_start, bio_end;
 	sector_t first_stripe_index, last_stripe_index;
 	sector_t start_disk_offset;
@@ -1617,43 +1603,65 @@ static int raid10_handle_discard(struct mddev *mddev, struct bio *bio)
 
 	wait_barrier(conf);
 
-	/* Check reshape again to avoid reshape happens after checking
+	/*
+	 * Check reshape again to avoid reshape happens after checking
 	 * MD_RECOVERY_RESHAPE and before wait_barrier
 	 */
 	if (test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery))
 		goto out;
 
-	stripe_size = geo->raid_disks << geo->chunk_shift;
+	if (geo->near_copies)
+		stripe_data_disks = geo->raid_disks / geo->near_copies +
+					geo->raid_disks % geo->near_copies;
+	else
+		stripe_data_disks = geo->raid_disks;
+
+	stripe_size = stripe_data_disks << geo->chunk_shift;
+
 	bio_start = bio->bi_iter.bi_sector;
 	bio_end = bio_end_sector(bio);
 
-	/* Maybe one discard bio is smaller than strip size or across one stripe
-	 * and discard region is larger than one stripe size. For far offset layout,
-	 * if the discard region is not aligned with stripe size, there is hole
-	 * when we submit discard bio to member disk. For simplicity, we only
-	 * handle discard bio which discard region is bigger than stripe_size*2
+	/*
+	 * Maybe one discard bio is smaller than strip size or across one
+	 * stripe and discard region is larger than one stripe size. For far
+	 * offset layout, if the discard region is not aligned with stripe
+	 * size, there is hole when we submit discard bio to member disk.
+	 * For simplicity, we only handle discard bio which discard region
+	 * is bigger than stripe_size * 2
 	 */
 	if (bio_sectors(bio) < stripe_size*2)
 		goto out;
 
-	/* For far and far offset layout, if bio is not aligned with stripe size,
-	 * it splits the part that is not aligned with strip size.
+	/*
+	 * Keep bio aligned with strip size.
 	 */
 	div_u64_rem(bio_start, stripe_size, &remainder);
-	if ((far_copies > 1) && remainder) {
+	if (remainder) {
 		split_size = stripe_size - remainder;
-		bio = raid10_split_bio(conf, bio, split_size, false);
+		split = bio_split(bio, split_size, GFP_NOIO, &conf->bio_split);
+		bio_chain(split, bio);
+		allow_barrier(conf);
+		/* Resend the fist split part */
+		submit_bio_noacct(split);
+		wait_barrier(conf);
 	}
 	div_u64_rem(bio_end, stripe_size, &remainder);
-	if ((far_copies > 1) && remainder) {
+	if (remainder) {
 		split_size = bio_sectors(bio) - remainder;
-		bio = raid10_split_bio(conf, bio, split_size, true);
+		split = bio_split(bio, split_size, GFP_NOIO, &conf->bio_split);
+		bio_chain(split, bio);
+		allow_barrier(conf);
+		/* Resend the second split part */
+		submit_bio_noacct(bio);
+		bio = split;
+		wait_barrier(conf);
 	}
 
 	bio_start = bio->bi_iter.bi_sector;
 	bio_end = bio_end_sector(bio);
 
-	/* raid10 uses chunk as the unit to store data. It's similar like raid0.
+	/*
+	 * Raid10 uses chunk as the unit to store data. It's similar like raid0.
 	 * One stripe contains the chunks from all member disk (one chunk from
 	 * one disk at the same HBA address). For layout detail, see 'man md 4'
 	 */
@@ -1683,7 +1691,8 @@ retry_discard:
 	memset(r10_bio->devs, 0, sizeof(r10_bio->devs[0]) * geo->raid_disks);
 	wait_blocked_dev(mddev, r10_bio);
 
-	/* For far layout it needs more than one r10bio to cover all regions.
+	/*
+	 * For far layout it needs more than one r10bio to cover all regions.
 	 * Inspired by raid10_sync_request, we can use the first r10bio->master_bio
 	 * to record the discard bio. Other r10bio->master_bio record the first
 	 * r10bio. The first r10bio only release after all other r10bios finish.
@@ -1758,7 +1767,8 @@ retry_discard:
 		else
 			dev_end = end_disk_offset;
 
-		/* It only handles discard bio which size is >= stripe size, so
+		/*
+		 * It only handles discard bio which size is >= stripe size, so
 		 * dev_end > dev_start all the time
 		 */
 		if (r10_bio->devs[disk].bio) {
@@ -3313,7 +3323,7 @@ static sector_t raid10_sync_request(struct mddev *mddev, sector_t sector_nr,
 
 	/* Again, very different code for resync and recovery.
 	 * Both must result in an r10bio with a list of bios that
-	 * have bi_end_io, bi_sector, bi_disk set,
+	 * have bi_end_io, bi_sector, bi_bdev set,
 	 * and bi_private set to the r10bio.
 	 * For recovery, we may actually create several r10bios
 	 * with 2 bios in each, that correspond to the bios in the main one.
@@ -4841,7 +4851,7 @@ read_more:
 		return sectors_done;
 	}
 
-	read_bio = bio_alloc_mddev(GFP_KERNEL, RESYNC_PAGES, mddev);
+	read_bio = bio_alloc_bioset(GFP_KERNEL, RESYNC_PAGES, &mddev->bio_set);
 
 	bio_set_dev(read_bio, rdev->bdev);
 	read_bio->bi_iter.bi_sector = (r10_bio->devs[r10_bio->read_slot].addr
@@ -4849,10 +4859,6 @@ read_more:
 	read_bio->bi_private = r10_bio;
 	read_bio->bi_end_io = end_reshape_read;
 	bio_set_op_attrs(read_bio, REQ_OP_READ, 0);
-	read_bio->bi_flags &= (~0UL << BIO_RESET_BITS);
-	read_bio->bi_status = 0;
-	read_bio->bi_vcnt = 0;
-	read_bio->bi_iter.bi_size = 0;
 	r10_bio->master_bio = read_bio;
 	r10_bio->read_slot = r10_bio->devs[r10_bio->read_slot].devnum;
 

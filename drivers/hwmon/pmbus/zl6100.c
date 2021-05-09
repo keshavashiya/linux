@@ -396,7 +396,6 @@ static struct i2c_driver zl6100_driver = {
 		   .name = "zl6100",
 		   },
 	.probe_new = zl6100_probe,
-	.remove = pmbus_do_remove,
 	.id_table = zl6100_id,
 };
 
@@ -405,3 +404,4 @@ module_i2c_driver(zl6100_driver);
 MODULE_AUTHOR("Guenter Roeck");
 MODULE_DESCRIPTION("PMBus driver for ZL6100 and compatibles");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(PMBUS);

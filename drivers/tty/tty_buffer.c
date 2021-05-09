@@ -17,7 +17,7 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/ratelimit.h>
-
+#include "tty.h"
 
 #define MIN_TTYB_SIZE	256
 #define TTYB_ALIGN_MASK	255
@@ -583,6 +583,7 @@ void tty_buffer_init(struct tty_port *port)
 /**
  *	tty_buffer_set_limit	-	change the tty buffer memory limit
  *	@port: tty port to change
+ *	@limit: memory limit to set
  *
  *	Change the tty buffer memory limit.
  *	Must be called before the other tty buffer functions are used.

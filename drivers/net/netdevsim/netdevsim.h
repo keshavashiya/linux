@@ -15,6 +15,7 @@
 
 #include <linux/debugfs.h>
 #include <linux/device.h>
+#include <linux/ethtool.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/netdevice.h>
@@ -51,11 +52,20 @@ struct nsim_ipsec {
 	u32 ok;
 };
 
-struct nsim_ethtool {
+struct nsim_ethtool_pauseparam {
 	bool rx;
 	bool tx;
 	bool report_stats_rx;
 	bool report_stats_tx;
+};
+
+struct nsim_ethtool {
+	u32 get_err;
+	u32 set_err;
+	struct nsim_ethtool_pauseparam pauseparam;
+	struct ethtool_coalesce coalesce;
+	struct ethtool_ringparam ring;
+	struct ethtool_fecparam fec;
 };
 
 struct netdevsim {
@@ -158,6 +168,7 @@ enum nsim_resource_id {
 	NSIM_RESOURCE_IPV6,
 	NSIM_RESOURCE_IPV6_FIB,
 	NSIM_RESOURCE_IPV6_FIB_RULES,
+	NSIM_RESOURCE_NEXTHOPS,
 };
 
 struct nsim_dev_health {
@@ -171,6 +182,20 @@ struct nsim_dev_health {
 
 int nsim_dev_health_init(struct nsim_dev *nsim_dev, struct devlink *devlink);
 void nsim_dev_health_exit(struct nsim_dev *nsim_dev);
+
+#if IS_ENABLED(CONFIG_PSAMPLE)
+int nsim_dev_psample_init(struct nsim_dev *nsim_dev);
+void nsim_dev_psample_exit(struct nsim_dev *nsim_dev);
+#else
+static inline int nsim_dev_psample_init(struct nsim_dev *nsim_dev)
+{
+	return 0;
+}
+
+static inline void nsim_dev_psample_exit(struct nsim_dev *nsim_dev)
+{
+}
+#endif
 
 struct nsim_dev_port {
 	struct list_head list;
@@ -189,6 +214,7 @@ struct nsim_dev {
 	struct dentry *take_snapshot;
 	struct bpf_offload_dev *bpf_dev;
 	bool bpf_bind_accept;
+	bool bpf_bind_verifier_accept;
 	u32 bpf_bind_verifier_delay;
 	struct dentry *ddir_bpf_bound_progs;
 	u32 prog_id_gen;
@@ -220,6 +246,7 @@ struct nsim_dev {
 		bool static_iana_vxlan;
 		u32 sleep;
 	} udp_ports;
+	struct nsim_dev_psample *psample;
 };
 
 static inline struct net *nsim_dev_net(struct nsim_dev *nsim_dev)

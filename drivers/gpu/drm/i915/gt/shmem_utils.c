@@ -33,13 +33,13 @@ struct file *shmem_create_from_object(struct drm_i915_gem_object *obj)
 	struct file *file;
 	void *ptr;
 
-	if (obj->ops == &i915_gem_shmem_ops) {
+	if (i915_gem_object_is_shmem(obj)) {
 		file = obj->base.filp;
 		atomic_long_inc(&file->f_count);
 		return file;
 	}
 
-	ptr = i915_gem_object_pin_map(obj, I915_MAP_WB);
+	ptr = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
 	if (IS_ERR(ptr))
 		return ERR_CAST(ptr);
 
@@ -73,7 +73,7 @@ void *shmem_pin_map(struct file *file)
 	mapping_set_unevictable(file->f_mapping);
 	return vaddr;
 err_page:
-	while (--i >= 0)
+	while (i--)
 		put_page(pages[i]);
 	kvfree(pages);
 	return NULL;
@@ -103,10 +103,13 @@ static int __shmem_rw(struct file *file, loff_t off,
 			return PTR_ERR(page);
 
 		vaddr = kmap(page);
-		if (write)
+		if (write) {
 			memcpy(vaddr + offset_in_page(off), ptr, this);
-		else
+			set_page_dirty(page);
+		} else {
 			memcpy(ptr, vaddr + offset_in_page(off), this);
+		}
+		mark_page_accessed(page);
 		kunmap(page);
 		put_page(page);
 
