@@ -95,6 +95,7 @@ xdr_buf_init(struct xdr_buf *buf, void *start, size_t len)
 #define	rpc_auth_unix	cpu_to_be32(RPC_AUTH_UNIX)
 #define	rpc_auth_short	cpu_to_be32(RPC_AUTH_SHORT)
 #define	rpc_auth_gss	cpu_to_be32(RPC_AUTH_GSS)
+#define	rpc_auth_tls	cpu_to_be32(RPC_AUTH_TLS)
 
 #define	rpc_call	cpu_to_be32(RPC_CALL)
 #define	rpc_reply	cpu_to_be32(RPC_REPLY)
@@ -242,7 +243,7 @@ extern void xdr_init_encode(struct xdr_stream *xdr, struct xdr_buf *buf,
 extern __be32 *xdr_reserve_space(struct xdr_stream *xdr, size_t nbytes);
 extern int xdr_reserve_space_vec(struct xdr_stream *xdr, struct kvec *vec,
 		size_t nbytes);
-extern void xdr_commit_encode(struct xdr_stream *xdr);
+extern void __xdr_commit_encode(struct xdr_stream *xdr);
 extern void xdr_truncate_encode(struct xdr_stream *xdr, size_t len);
 extern int xdr_restrict_buflen(struct xdr_stream *xdr, int newbuflen);
 extern void xdr_write_pages(struct xdr_stream *xdr, struct page **pages,
@@ -303,6 +304,20 @@ static inline void
 xdr_reset_scratch_buffer(struct xdr_stream *xdr)
 {
 	xdr_set_scratch_buffer(xdr, NULL, 0);
+}
+
+/**
+ * xdr_commit_encode - Ensure all data is written to xdr->buf
+ * @xdr: pointer to xdr_stream
+ *
+ * Handle encoding across page boundaries by giving the caller a
+ * temporary location to write to, then later copying the data into
+ * place. __xdr_commit_encode() does that copying.
+ */
+static inline void xdr_commit_encode(struct xdr_stream *xdr)
+{
+	if (unlikely(xdr->scratch.iov_len))
+		__xdr_commit_encode(xdr);
 }
 
 /**
@@ -729,6 +744,8 @@ xdr_stream_decode_uint32_array(struct xdr_stream *xdr,
 	ssize_t retval;
 
 	if (unlikely(xdr_stream_decode_u32(xdr, &len) < 0))
+		return -EBADMSG;
+	if (len > SIZE_MAX / sizeof(*p))
 		return -EBADMSG;
 	p = xdr_inline_decode(xdr, len * sizeof(*p));
 	if (unlikely(!p))

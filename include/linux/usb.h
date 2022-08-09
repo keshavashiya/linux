@@ -473,12 +473,6 @@ struct usb_dev_state;
 
 struct usb_tt;
 
-enum usb_device_removable {
-	USB_DEVICE_REMOVABLE_UNKNOWN = 0,
-	USB_DEVICE_REMOVABLE,
-	USB_DEVICE_FIXED,
-};
-
 enum usb_port_connect_type {
 	USB_PORT_CONNECT_TYPE_UNKNOWN = 0,
 	USB_PORT_CONNECT_TYPE_HOT_PLUG,
@@ -590,6 +584,7 @@ struct usb3_lpm_parameters {
  * @authenticated: Crypto authentication passed
  * @wusb: device is Wireless USB
  * @lpm_capable: device supports LPM
+ * @lpm_devinit_allow: Allow USB3 device initiated LPM, exit latency is in range
  * @usb2_hw_lpm_capable: device can perform USB2 hardware LPM
  * @usb2_hw_lpm_besl_capable: device can perform USB2 hardware BESL LPM
  * @usb2_hw_lpm_enabled: USB2 hardware LPM is enabled
@@ -672,6 +667,7 @@ struct usb_device {
 	unsigned authenticated:1;
 	unsigned wusb:1;
 	unsigned lpm_capable:1;
+	unsigned lpm_devinit_allow:1;
 	unsigned usb2_hw_lpm_capable:1;
 	unsigned usb2_hw_lpm_besl_capable:1;
 	unsigned usb2_hw_lpm_enabled:1;
@@ -703,7 +699,6 @@ struct usb_device {
 #endif
 	struct wusb_dev *wusb_dev;
 	int slot_id;
-	enum usb_device_removable removable;
 	struct usb2_lpm_parameters l1_params;
 	struct usb3_lpm_parameters u1_params;
 	struct usb3_lpm_parameters u2_params;
@@ -881,15 +876,6 @@ extern struct usb_host_interface *usb_find_alt_setting(
 		struct usb_host_config *config,
 		unsigned int iface_num,
 		unsigned int alt_num);
-
-#if IS_REACHABLE(CONFIG_USB)
-int usb_for_each_port(void *data, int (*fn)(struct device *, void *));
-#else
-static inline int usb_for_each_port(void *data, int (*fn)(struct device *, void *))
-{
-	return 0;
-}
-#endif
 
 /* port claiming functions */
 int usb_hub_claim_port(struct usb_device *hdev, unsigned port1,
@@ -1485,7 +1471,7 @@ typedef void (*usb_complete_t)(struct urb *);
  *
  * Note that transfer_buffer must still be set if the controller
  * does not support DMA (as indicated by hcd_uses_dma()) and when talking
- * to root hub. If you have to trasfer between highmem zone and the device
+ * to root hub. If you have to transfer between highmem zone and the device
  * on such controller, create a bounce buffer or bail out with an error.
  * If transfer_buffer cannot be set (is in highmem) and the controller is DMA
  * capable, assign NULL to it, so that usbmon knows not to use the value.
@@ -1985,29 +1971,16 @@ usb_pipe_endpoint(struct usb_device *dev, unsigned int pipe)
 	return eps[usb_pipeendpoint(pipe)];
 }
 
-/*-------------------------------------------------------------------------*/
-
-static inline __u16
-usb_maxpacket(struct usb_device *udev, int pipe, int is_out)
+static inline u16 usb_maxpacket(struct usb_device *udev, int pipe)
 {
-	struct usb_host_endpoint	*ep;
-	unsigned			epnum = usb_pipeendpoint(pipe);
+	struct usb_host_endpoint *ep = usb_pipe_endpoint(udev, pipe);
 
-	if (is_out) {
-		WARN_ON(usb_pipein(pipe));
-		ep = udev->ep_out[epnum];
-	} else {
-		WARN_ON(usb_pipeout(pipe));
-		ep = udev->ep_in[epnum];
-	}
 	if (!ep)
 		return 0;
 
 	/* NOTE:  only 0x07ff bits are for packet size... */
 	return usb_endpoint_maxp(&ep->desc);
 }
-
-/* ----------------------------------------------------------------------- */
 
 /* translate USB error codes to codes user space understands */
 static inline int usb_translate_errors(int error_code)

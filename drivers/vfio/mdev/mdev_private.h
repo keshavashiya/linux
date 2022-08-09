@@ -15,7 +15,7 @@ void mdev_bus_unregister(void);
 
 struct mdev_parent {
 	struct device *dev;
-	const struct mdev_parent_ops *ops;
+	struct mdev_driver *mdev_driver;
 	struct kref ref;
 	struct list_head next;
 	struct kset *mdev_types_kset;
@@ -31,6 +31,8 @@ struct mdev_type {
 	struct list_head next;
 	unsigned int type_group_id;
 };
+
+extern const struct attribute_group *mdev_device_groups[];
 
 #define to_mdev_type_attr(_attr)	\
 	container_of(_attr, struct mdev_type_attribute, attr)

@@ -237,10 +237,15 @@ struct id_index_entry {
 	__u64			 tid;
 };
 
+struct id_index_entry_2 {
+	__u64			 machine_pid;
+	__u64			 vcpu;
+};
+
 struct perf_record_id_index {
 	struct perf_event_header header;
 	__u64			 nr;
-	struct id_index_entry	 entries[0];
+	struct id_index_entry	 entries[];
 };
 
 struct perf_record_auxtrace_info {
@@ -274,6 +279,8 @@ struct perf_record_auxtrace_error {
 	__u64			 ip;
 	__u64			 time;
 	char			 msg[MAX_AUXTRACE_ERROR_MSG];
+	__u32			 machine_pid;
+	__u32			 vcpu;
 };
 
 struct perf_record_aux {
@@ -287,6 +294,11 @@ struct perf_record_itrace_start {
 	struct perf_event_header header;
 	__u32			 pid;
 	__u32			 tid;
+};
+
+struct perf_record_aux_output_hw_id {
+	struct perf_event_header header;
+	__u64			hw_id;
 };
 
 struct perf_record_thread_map_entry {
@@ -384,6 +396,7 @@ enum perf_user_event_type { /* above any possible kernel type */
 	PERF_RECORD_TIME_CONV			= 79,
 	PERF_RECORD_HEADER_FEATURE		= 80,
 	PERF_RECORD_COMPRESSED			= 81,
+	PERF_RECORD_FINISHED_INIT		= 82,
 	PERF_RECORD_HEADER_MAX
 };
 
@@ -414,6 +427,7 @@ union perf_event {
 	struct perf_record_auxtrace_error	auxtrace_error;
 	struct perf_record_aux			aux;
 	struct perf_record_itrace_start		itrace_start;
+	struct perf_record_aux_output_hw_id	aux_output_hw_id;
 	struct perf_record_switch		context_switch;
 	struct perf_record_thread_map		thread_map;
 	struct perf_record_cpu_map		cpu_map;

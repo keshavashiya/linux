@@ -283,8 +283,8 @@ int tpm2_seal_trusted(struct tpm_chip *chip,
 	/* key properties */
 	flags = 0;
 	flags |= options->policydigest_len ? 0 : TPM2_OA_USER_WITH_AUTH;
-	flags |= payload->migratable ? (TPM2_OA_FIXED_TPM |
-					TPM2_OA_FIXED_PARENT) : 0;
+	flags |= payload->migratable ? 0 : (TPM2_OA_FIXED_TPM |
+					    TPM2_OA_FIXED_PARENT);
 	tpm_buf_append_u32(&buf, flags);
 
 	/* policy */
@@ -336,9 +336,9 @@ out:
 			rc = -EPERM;
 	}
 	if (blob_len < 0)
-		return blob_len;
-
-	payload->blob_len = blob_len;
+		rc = blob_len;
+	else
+		payload->blob_len = blob_len;
 
 	tpm_put_ops(chip);
 	return rc;

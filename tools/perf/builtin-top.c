@@ -22,6 +22,7 @@
 
 #include "util/annotate.h"
 #include "util/bpf-event.h"
+#include "util/cgroup.h"
 #include "util/config.h"
 #include "util/color.h"
 #include "util/dso.h"
@@ -263,9 +264,9 @@ static void perf_top__show_details(struct perf_top *top)
 
 	if (top->evlist->enabled) {
 		if (top->zero)
-			symbol__annotate_zero_histogram(symbol, top->sym_evsel->idx);
+			symbol__annotate_zero_histogram(symbol, top->sym_evsel->core.idx);
 		else
-			symbol__annotate_decay_histogram(symbol, top->sym_evsel->idx);
+			symbol__annotate_decay_histogram(symbol, top->sym_evsel->core.idx);
 	}
 	if (more != 0)
 		printf("%d lines not displayed, maybe increase display entries [e]\n", more);
@@ -300,7 +301,7 @@ static void perf_top__resort_hists(struct perf_top *t)
 
 		/* Non-group events are considered as leader */
 		if (symbol_conf.event_group && !evsel__is_group_leader(pos)) {
-			struct hists *leader_hists = evsel__hists(pos->leader);
+			struct hists *leader_hists = evsel__hists(evsel__leader(pos));
 
 			hists__match(leader_hists, hists);
 			hists__link(leader_hists, hists);
@@ -529,7 +530,7 @@ static bool perf_top__handle_keypress(struct perf_top *top, int c)
 				fprintf(stderr, "\nAvailable events:");
 
 				evlist__for_each_entry(top->evlist, top->sym_evsel)
-					fprintf(stderr, "\n\t%d %s", top->sym_evsel->idx, evsel__name(top->sym_evsel));
+					fprintf(stderr, "\n\t%d %s", top->sym_evsel->core.idx, evsel__name(top->sym_evsel));
 
 				prompt_integer(&counter, "Enter details event counter");
 
@@ -540,7 +541,7 @@ static bool perf_top__handle_keypress(struct perf_top *top, int c)
 					break;
 				}
 				evlist__for_each_entry(top->evlist, top->sym_evsel)
-					if (top->sym_evsel->idx == counter)
+					if (top->sym_evsel->core.idx == counter)
 						break;
 			} else
 				top->sym_evsel = evlist__first(top->evlist);
@@ -745,7 +746,6 @@ static void perf_event__process_sample(struct perf_tool *tool,
 {
 	struct perf_top *top = container_of(tool, struct perf_top, tool);
 	struct addr_location al;
-	int err;
 
 	if (!machine && perf_guest) {
 		static struct intlist *seen;
@@ -838,8 +838,7 @@ static void perf_event__process_sample(struct perf_tool *tool,
 
 		pthread_mutex_lock(&hists->lock);
 
-		err = hist_entry_iter__add(&iter, &al, top->max_stack, top);
-		if (err < 0)
+		if (hist_entry_iter__add(&iter, &al, top->max_stack, top) < 0)
 			pr_err("Problem incrementing symbol period, skipping event\n");
 
 		pthread_mutex_unlock(&hists->lock);
@@ -887,7 +886,7 @@ static void perf_top__mmap_read_idx(struct perf_top *top, int idx)
 		if (ret && ret != -1)
 			break;
 
-		ret = ordered_events__queue(top->qe.in, event, last_timestamp, 0);
+		ret = ordered_events__queue(top->qe.in, event, last_timestamp, 0, NULL);
 		if (ret)
 			break;
 
@@ -1022,7 +1021,7 @@ static int perf_top__start_counters(struct perf_top *top)
 
 	evlist__for_each_entry(evlist, counter) {
 try_again:
-		if (evsel__open(counter, top->evlist->core.cpus,
+		if (evsel__open(counter, top->evlist->core.user_requested_cpus,
 				     top->evlist->core.threads) < 0) {
 
 			/*
@@ -1270,7 +1269,7 @@ static int __cmd_top(struct perf_top *top)
 		pr_debug("Couldn't synthesize cgroup events.\n");
 
 	machine__synthesize_threads(&top->session->machines.host, &opts->target,
-				    top->evlist->core.threads, false,
+				    top->evlist->core.threads, true, false,
 				    top->nr_threads_synthesize);
 
 	if (top->nr_threads_synthesize > 1)
@@ -1485,7 +1484,9 @@ int cmd_top(int argc, const char **argv)
 		    "display this many functions"),
 	OPT_BOOLEAN('U', "hide_user_symbols", &top.hide_user_symbols,
 		    "hide user symbols"),
+#ifdef HAVE_SLANG_SUPPORT
 	OPT_BOOLEAN(0, "tui", &top.use_tui, "Use the TUI interface"),
+#endif
 	OPT_BOOLEAN(0, "stdio", &top.use_stdio, "Use the stdio interface"),
 	OPT_INCR('v', "verbose", &verbose,
 		    "be more verbose (show counter open errors, etc)"),
@@ -1558,6 +1559,8 @@ int cmd_top(int argc, const char **argv)
 	OPT_BOOLEAN(0, "force", &symbol_conf.force, "don't complain, do it"),
 	OPT_UINTEGER(0, "num-thread-synthesize", &top.nr_threads_synthesize,
 			"number of thread to run event synthesize"),
+	OPT_CALLBACK('G', "cgroup", &top.evlist, "name",
+		     "monitor event in cgroup name only", parse_cgroups),
 	OPT_BOOLEAN(0, "namespaces", &opts->record_namespaces,
 		    "Record namespaces events"),
 	OPT_BOOLEAN(0, "all-cgroups", &opts->record_cgroup,
@@ -1615,6 +1618,10 @@ int cmd_top(int argc, const char **argv)
 	if (argc)
 		usage_with_options(top_usage, options);
 
+	status = symbol__validate_sym_arguments();
+	if (status)
+		goto out_delete_evlist;
+
 	if (annotate_check_args(&top.annotation_opts) < 0)
 		goto out_delete_evlist;
 
@@ -1646,6 +1653,11 @@ int cmd_top(int argc, const char **argv)
 		goto out_delete_evlist;
 	}
 
+	if (nr_cgroups > 0 && opts->record_cgroup) {
+		pr_err("--cgroup and --all-cgroups cannot be used together\n");
+		goto out_delete_evlist;
+	}
+
 	if (opts->branch_stack && callchain_param.enabled)
 		symbol_conf.show_branchflag_count = true;
 
@@ -1655,8 +1667,10 @@ int cmd_top(int argc, const char **argv)
 
 	if (top.use_stdio)
 		use_browser = 0;
+#ifdef HAVE_SLANG_SUPPORT
 	else if (top.use_tui)
 		use_browser = 1;
+#endif
 
 	setup_browser(false);
 
@@ -1732,7 +1746,7 @@ int cmd_top(int argc, const char **argv)
 		signal(SIGWINCH, winch_sig);
 	}
 
-	top.session = perf_session__new(NULL, false, NULL);
+	top.session = perf_session__new(NULL, NULL);
 	if (IS_ERR(top.session)) {
 		status = PTR_ERR(top.session);
 		goto out_delete_evlist;

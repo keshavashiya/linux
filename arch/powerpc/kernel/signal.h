@@ -25,8 +25,14 @@ static inline int __get_user_sigset(sigset_t *dst, const sigset_t __user *src)
 
 	return __get_user(dst->sig[0], (u64 __user *)&src->sig[0]);
 }
-#define unsafe_get_user_sigset(dst, src, label) \
-	unsafe_get_user((dst)->sig[0], (u64 __user *)&(src)->sig[0], label)
+#define unsafe_get_user_sigset(dst, src, label) do {			\
+	sigset_t *__dst = dst;						\
+	const sigset_t __user *__src = src;				\
+	int i;								\
+									\
+	for (i = 0; i < _NSIG_WORDS; i++)				\
+		unsafe_get_user(__dst->sig[i], &__src->sig[i], label);	\
+} while (0)
 
 #ifdef CONFIG_VSX
 extern unsigned long copy_vsx_to_user(void __user *to,
@@ -166,9 +172,9 @@ copy_ckfpr_from_user(struct task_struct *task, void __user *from)
 }
 #endif /* CONFIG_PPC_TRANSACTIONAL_MEM */
 #else
-#define unsafe_copy_fpr_to_user(to, task, label) do { } while (0)
+#define unsafe_copy_fpr_to_user(to, task, label) do { if (0) goto label;} while (0)
 
-#define unsafe_copy_fpr_from_user(task, from, label) do { } while (0)
+#define unsafe_copy_fpr_from_user(task, from, label) do { if (0) goto label;} while (0)
 
 static inline unsigned long
 copy_fpr_to_user(void __user *to, struct task_struct *task)

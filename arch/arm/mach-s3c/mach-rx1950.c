@@ -271,7 +271,6 @@ static int rx1950_led_blink_set(struct gpio_desc *desc, int state,
 		break;
 	default:
 		return -EINVAL;
-		break;
 	}
 
 	if (delay_on && delay_off && !*delay_on && !*delay_off)
@@ -869,6 +868,7 @@ static void __init rx1950_reserve(void)
 MACHINE_START(RX1950, "HP iPAQ RX1950")
     /* Maintainers: Vasily Khoruzhick */
 	.atag_offset = 0x100,
+	.nr_irqs	= NR_IRQS_S3C2442,
 	.map_io = rx1950_map_io,
 	.reserve	= rx1950_reserve,
 	.init_irq	= s3c2442_init_irq,

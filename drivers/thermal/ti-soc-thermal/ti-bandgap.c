@@ -226,7 +226,7 @@ static irqreturn_t ti_bandgap_talert_irq_handler(int irq, void *data)
 		/*
 		 * One TALERT interrupt: Two sources
 		 * If the interrupt is due to t_hot then mask t_hot and
-		 * and unmask t_cold else mask t_cold and unmask t_hot
+		 * unmask t_cold else mask t_cold and unmask t_hot
 		 */
 		if (t_hot) {
 			ctrl &= ~tsr->mask_hot_mask;
@@ -770,7 +770,7 @@ static int ti_bandgap_tshut_init(struct ti_bandgap *bgp,
 }
 
 /**
- * ti_bandgap_alert_init() - setup and initialize talert handling
+ * ti_bandgap_talert_init() - setup and initialize talert handling
  * @bgp: pointer to struct ti_bandgap
  * @pdev: pointer to device struct platform_device
  *

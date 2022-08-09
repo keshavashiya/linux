@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 %YAML 1.2
 ---
-$id: "http://devicetree.org/schemas/power/supply/sc2731-charger.yaml#"
-$schema: "http://devicetree.org/meta-schemas/core.yaml#"
+$id: http://devicetree.org/schemas/power/supply/sc2731-charger.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
 
 title: Spreadtrum SC2731 PMICs battery charger binding
 
@@ -20,7 +20,7 @@ properties:
     maxItems: 1
 
   phys:
-    $ref: /schemas/types.yaml#/definitions/phandle
+    maxItems: 1
     description: phandle to the USB phy
 
   monitored-battery:

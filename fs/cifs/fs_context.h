@@ -47,11 +47,8 @@ enum cifs_sec_param {
 	Opt_sec_krb5p,
 	Opt_sec_ntlmsspi,
 	Opt_sec_ntlmssp,
-	Opt_ntlm,
-	Opt_sec_ntlmi,
 	Opt_sec_ntlmv2,
 	Opt_sec_ntlmv2i,
-	Opt_sec_lanman,
 	Opt_sec_none,
 
 	Opt_sec_err
@@ -65,6 +62,7 @@ enum cifs_param {
 	Opt_noblocksend,
 	Opt_noautotune,
 	Opt_nolease,
+	Opt_nosparse,
 	Opt_hard,
 	Opt_soft,
 	Opt_perm,
@@ -101,6 +99,7 @@ enum cifs_param {
 	Opt_nosharesock,
 	Opt_persistent,
 	Opt_resilient,
+	Opt_tcp_nodelay,
 	Opt_domainauto,
 	Opt_rdma,
 	Opt_modesid,
@@ -155,6 +154,7 @@ enum cifs_param {
 
 struct smb3_fs_context {
 	bool uid_specified;
+	bool cruid_specified;
 	bool gid_specified;
 	bool sloppy;
 	bool got_ip;
@@ -168,8 +168,10 @@ struct smb3_fs_context {
 	char *password;
 	char *domainname;
 	char *source;
+	char *server_hostname;
 	char *UNC;
 	char *nodename;
+	char workstation_name[CIFS_MAX_WORKSTATION_LEN];
 	char *iocharset;  /* local code page for mapping to and from Unicode */
 	char source_rfc1001_name[RFC1001_NAME_LEN_WITH_NULL]; /* clnt nb name */
 	char target_rfc1001_name[RFC1001_NAME_LEN_WITH_NULL]; /* srvr nb name */
@@ -221,6 +223,7 @@ struct smb3_fs_context {
 	bool noautotune:1;
 	bool nostrictsync:1; /* do not force expensive SMBflush on every sync */
 	bool no_lease:1;     /* disable requesting leases */
+	bool no_sparse:1;    /* do not attempt to set files sparse */
 	bool fsc:1;	/* enable fscache */
 	bool mfsymlinks:1; /* use Minshall+French Symlinks */
 	bool multiuser:1;

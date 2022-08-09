@@ -7,10 +7,10 @@
 #include <linux/pci.h>
 #include <linux/of_address.h>
 #include <linux/of_device.h>
+#include <linux/of_irq.h>
 #include <linux/serial_reg.h>
 #include <asm/io.h>
 #include <asm/mmu.h>
-#include <asm/prom.h>
 #include <asm/serial.h>
 #include <asm/udbg.h>
 #include <asm/pci-bridge.h>
@@ -356,12 +356,15 @@ static void __init setup_legacy_serial_console(int console)
 
 static int __init ioremap_legacy_serial_console(void)
 {
-	struct legacy_serial_info *info = &legacy_serial_infos[legacy_serial_console];
-	struct plat_serial8250_port *port = &legacy_serial_ports[legacy_serial_console];
+	struct plat_serial8250_port *port;
+	struct legacy_serial_info *info;
 	void __iomem *vaddr;
 
 	if (legacy_serial_console < 0)
 		return 0;
+
+	info = &legacy_serial_infos[legacy_serial_console];
+	port = &legacy_serial_ports[legacy_serial_console];
 
 	if (!info->early_addr)
 		return 0;

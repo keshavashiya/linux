@@ -772,7 +772,14 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 	INIT_LIST_HEAD(&dev->t10_alua.lba_map_list);
 	spin_lock_init(&dev->t10_alua.lba_map_lock);
 
+	INIT_WORK(&dev->delayed_cmd_work, target_do_delayed_work);
+
 	dev->t10_wwn.t10_dev = dev;
+	/*
+	 * Use OpenFabrics IEEE Company ID: 00 14 05
+	 */
+	dev->t10_wwn.company_id = 0x001405;
+
 	dev->t10_alua.t10_dev = dev;
 
 	dev->dev_attrib.da_dev = dev;
@@ -822,28 +829,26 @@ struct se_device *target_alloc_device(struct se_hba *hba, const char *name)
 }
 
 /*
- * Check if the underlying struct block_device request_queue supports
- * the QUEUE_FLAG_DISCARD bit for UNMAP/WRITE_SAME in SCSI + TRIM
- * in ATA and we need to set TPE=1
+ * Check if the underlying struct block_device supports discard and if yes
+ * configure the UNMAP parameters.
  */
 bool target_configure_unmap_from_queue(struct se_dev_attrib *attrib,
-				       struct request_queue *q)
+				       struct block_device *bdev)
 {
-	int block_size = queue_logical_block_size(q);
+	int block_size = bdev_logical_block_size(bdev);
 
-	if (!blk_queue_discard(q))
+	if (!bdev_max_discard_sectors(bdev))
 		return false;
 
 	attrib->max_unmap_lba_count =
-		q->limits.max_discard_sectors >> (ilog2(block_size) - 9);
+		bdev_max_discard_sectors(bdev) >> (ilog2(block_size) - 9);
 	/*
 	 * Currently hardcoded to 1 in Linux/SCSI code..
 	 */
 	attrib->max_unmap_block_desc_count = 1;
-	attrib->unmap_granularity = q->limits.discard_granularity / block_size;
-	attrib->unmap_granularity_alignment = q->limits.discard_alignment /
-								block_size;
-	attrib->unmap_zeroes_data = !!(q->limits.max_write_zeroes_sectors);
+	attrib->unmap_granularity = bdev_discard_granularity(bdev) / block_size;
+	attrib->unmap_granularity_alignment =
+		bdev_discard_alignment(bdev) / block_size;
 	return true;
 }
 EXPORT_SYMBOL(target_configure_unmap_from_queue);
@@ -955,6 +960,12 @@ int target_configure_device(struct se_device *dev)
 	ret = dev->transport->configure_device(dev);
 	if (ret)
 		goto out_free_index;
+
+	if (dev->transport->configure_unmap &&
+	    dev->transport->configure_unmap(dev)) {
+		pr_debug("Discard support available, but disabled by default.\n");
+	}
+
 	/*
 	 * XXX: there is not much point to have two different values here..
 	 */

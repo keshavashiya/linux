@@ -4,6 +4,9 @@
  * Author: Rob Clark <robdclark@gmail.com>
  */
 
+#include <linux/vmalloc.h>
+#include <linux/sched/mm.h>
+
 #include "msm_drv.h"
 #include "msm_gem.h"
 #include "msm_gpu.h"
@@ -12,7 +15,7 @@
 /* Default disabled for now until it has some more testing on the different
  * iommu combinations that can be paired with the driver:
  */
-bool enable_eviction = false;
+static bool enable_eviction = false;
 MODULE_PARM_DESC(enable_eviction, "Enable swappable GEM buffers");
 module_param(enable_eviction, bool, 0600);
 
@@ -145,6 +148,24 @@ msm_gem_shrinker_scan(struct shrinker *shrinker, struct shrink_control *sc)
 	return (freed > 0) ? freed : SHRINK_STOP;
 }
 
+#ifdef CONFIG_DEBUG_FS
+unsigned long
+msm_gem_shrinker_shrink(struct drm_device *dev, unsigned long nr_to_scan)
+{
+	struct msm_drm_private *priv = dev->dev_private;
+	struct shrink_control sc = {
+		.nr_to_scan = nr_to_scan,
+	};
+	int ret;
+
+	fs_reclaim_acquire(GFP_KERNEL);
+	ret = msm_gem_shrinker_scan(&priv->shrinker, &sc);
+	fs_reclaim_release(GFP_KERNEL);
+
+	return ret;
+}
+#endif
+
 /* since we don't know any better, lets bail after a few
  * and if necessary the shrinker will be invoked again.
  * Seems better than unmapping *everything*
@@ -200,7 +221,7 @@ void msm_gem_shrinker_init(struct drm_device *dev)
 	priv->shrinker.count_objects = msm_gem_shrinker_count;
 	priv->shrinker.scan_objects = msm_gem_shrinker_scan;
 	priv->shrinker.seeks = DEFAULT_SEEKS;
-	WARN_ON(register_shrinker(&priv->shrinker));
+	WARN_ON(register_shrinker(&priv->shrinker, "drm-msm_gem"));
 
 	priv->vmap_notifier.notifier_call = msm_gem_shrinker_vmap;
 	WARN_ON(register_vmap_purge_notifier(&priv->vmap_notifier));

@@ -359,7 +359,7 @@ static int rt1019_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 
 	ret = rl6231_pll_calc(freq_in, freq_out, &pll_code);
 	if (ret < 0) {
-		dev_err(component->dev, "Unsupport input clock %d\n", freq_in);
+		dev_err(component->dev, "Unsupported input clock %d\n", freq_in);
 		return ret;
 	}
 
@@ -372,8 +372,8 @@ static int rt1019_set_dai_pll(struct snd_soc_dai *dai, int pll_id, int source,
 		RT1019_AUTO_BITS_SEL_MANU | RT1019_AUTO_CLK_SEL_MANU);
 	snd_soc_component_update_bits(component, RT1019_PLL_1,
 		RT1019_PLL_M_MASK | RT1019_PLL_M_BP_MASK | RT1019_PLL_Q_8_8_MASK,
-		(pll_code.m_bp ? 0 : pll_code.m_code) << RT1019_PLL_M_SFT |
-		pll_code.m_bp << RT1019_PLL_M_BP_SFT |
+		((pll_code.m_bp ? 0 : pll_code.m_code) << RT1019_PLL_M_SFT) |
+		(pll_code.m_bp << RT1019_PLL_M_BP_SFT) |
 		((pll_code.n_code >> 8) & RT1019_PLL_Q_8_8_MASK));
 	snd_soc_component_update_bits(component, RT1019_PLL_2,
 		RT1019_PLL_Q_7_0_MASK, pll_code.n_code & RT1019_PLL_Q_7_0_MASK);
@@ -515,13 +515,14 @@ static struct snd_soc_dai_driver rt1019_dai[] = {
 };
 
 static const struct snd_soc_component_driver soc_component_dev_rt1019 = {
-	.probe = rt1019_probe,
+	.probe			= rt1019_probe,
 	.controls		= rt1019_snd_controls,
 	.num_controls		= ARRAY_SIZE(rt1019_snd_controls),
 	.dapm_widgets		= rt1019_dapm_widgets,
 	.num_dapm_widgets	= ARRAY_SIZE(rt1019_dapm_widgets),
 	.dapm_routes		= rt1019_dapm_routes,
 	.num_dapm_routes	= ARRAY_SIZE(rt1019_dapm_routes),
+	.endianness		= 1,
 };
 
 static const struct regmap_config rt1019_regmap = {
@@ -557,8 +558,7 @@ static const struct acpi_device_id rt1019_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, rt1019_acpi_match);
 #endif
 
-static int rt1019_i2c_probe(struct i2c_client *i2c,
-	const struct i2c_device_id *id)
+static int rt1019_i2c_probe(struct i2c_client *i2c)
 {
 	struct rt1019_priv *rt1019;
 	int ret;
@@ -598,7 +598,7 @@ static struct i2c_driver rt1019_i2c_driver = {
 		.of_match_table = of_match_ptr(rt1019_of_match),
 		.acpi_match_table = ACPI_PTR(rt1019_acpi_match),
 	},
-	.probe = rt1019_i2c_probe,
+	.probe_new = rt1019_i2c_probe,
 	.id_table = rt1019_i2c_id,
 };
 module_i2c_driver(rt1019_i2c_driver);

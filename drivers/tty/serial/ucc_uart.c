@@ -1137,6 +1137,8 @@ static unsigned int soc_info(unsigned int *rev_h, unsigned int *rev_l)
 		/* No compatible property, so try the name. */
 		soc_string = np->name;
 
+	of_node_put(np);
+
 	/* Extract the SOC number from the "PowerPC," string */
 	if ((sscanf(soc_string, "PowerPC,%u", &soc) != 1) || !soc)
 		return 0;
@@ -1227,7 +1229,7 @@ static int soft_uart_init(struct platform_device *ofdev)
 		 * kernel, then we use it.
 		 */
 		ret = request_firmware_nowait(THIS_MODULE,
-					      FW_ACTION_HOTPLUG, filename, &ofdev->dev,
+					      FW_ACTION_UEVENT, filename, &ofdev->dev,
 					      GFP_KERNEL, &ofdev->dev, uart_firmware_cont);
 		if (ret) {
 			dev_err(&ofdev->dev,

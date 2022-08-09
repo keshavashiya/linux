@@ -1272,7 +1272,7 @@ static const struct net_device_ops korina_netdev_ops = {
 	.ndo_start_xmit		= korina_send_packet,
 	.ndo_set_rx_mode	= korina_multicast_list,
 	.ndo_tx_timeout		= korina_tx_timeout,
-	.ndo_do_ioctl		= korina_ioctl,
+	.ndo_eth_ioctl		= korina_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -1297,8 +1297,8 @@ static int korina_probe(struct platform_device *pdev)
 	lp = netdev_priv(dev);
 
 	if (mac_addr)
-		ether_addr_copy(dev->dev_addr, mac_addr);
-	else if (of_get_mac_address(pdev->dev.of_node, dev->dev_addr) < 0)
+		eth_hw_addr_set(dev, mac_addr);
+	else if (of_get_ethdev_address(pdev->dev.of_node, dev) < 0)
 		eth_hw_addr_random(dev);
 
 	clk = devm_clk_get_optional(&pdev->dev, "mdioclk");
@@ -1315,23 +1315,23 @@ static int korina_probe(struct platform_device *pdev)
 	lp->tx_irq = platform_get_irq_byname(pdev, "tx");
 
 	p = devm_platform_ioremap_resource_byname(pdev, "emac");
-	if (!p) {
+	if (IS_ERR(p)) {
 		printk(KERN_ERR DRV_NAME ": cannot remap registers\n");
-		return -ENOMEM;
+		return PTR_ERR(p);
 	}
 	lp->eth_regs = p;
 
 	p = devm_platform_ioremap_resource_byname(pdev, "dma_rx");
-	if (!p) {
+	if (IS_ERR(p)) {
 		printk(KERN_ERR DRV_NAME ": cannot remap Rx DMA registers\n");
-		return -ENOMEM;
+		return PTR_ERR(p);
 	}
 	lp->rx_dma_regs = p;
 
 	p = devm_platform_ioremap_resource_byname(pdev, "dma_tx");
-	if (!p) {
+	if (IS_ERR(p)) {
 		printk(KERN_ERR DRV_NAME ": cannot remap Tx DMA registers\n");
-		return -ENOMEM;
+		return PTR_ERR(p);
 	}
 	lp->tx_dma_regs = p;
 

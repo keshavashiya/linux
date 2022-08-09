@@ -1,24 +1,11 @@
+// SPDX-License-Identifier: LGPL-2.1
 /*
- *   fs/cifs/dir.c
  *
  *   vfs operations that deal with dentries
  *
  *   Copyright (C) International Business Machines  Corp., 2002,2009
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *
- *   This library is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Lesser General Public License as published
- *   by the Free Software Foundation; either version 2.1 of the License, or
- *   (at your option) any later version.
- *
- *   This library is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
- *   the GNU Lesser General Public License for more details.
- *
- *   You should have received a copy of the GNU Lesser General Public License
- *   along with this library; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 #include <linux/fs.h>
 #include <linux/stat.h>
@@ -35,6 +22,7 @@
 #include "cifs_unicode.h"
 #include "fs_context.h"
 #include "cifs_ioctl.h"
+#include "fscache.h"
 
 static void
 renew_parental_timestamps(struct dentry *direntry)
@@ -112,7 +100,7 @@ build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_USE_PREFIX_PATH)
 		pplen = cifs_sb->prepath ? strlen(cifs_sb->prepath) + 1 : 0;
 
-	s = dentry_path_raw(direntry, page, PAGE_SIZE);
+	s = dentry_path_raw(direntry, page, PATH_MAX);
 	if (IS_ERR(s))
 		return s;
 	if (!s[1])	// for root we want "", not "/"
@@ -205,6 +193,7 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 		return PTR_ERR(full_path);
 	}
 
+#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 	if (tcon->unix_ext && cap_unix(tcon->ses) && !tcon->broken_posix_open &&
 	    (CIFS_UNIX_POSIX_PATH_OPS_CAP &
 			le64_to_cpu(tcon->fsUnixInfo.Capability))) {
@@ -273,6 +262,7 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 		 * rare for path not covered on files)
 		 */
 	}
+#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 
 	desired_access = 0;
 	if (OPEN_FMODE(oflags) & FMODE_READ)
@@ -328,6 +318,7 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 		goto out;
 	}
 
+#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 	/*
 	 * If Open reported that we actually created a file then we now have to
 	 * set the mode if possible.
@@ -369,6 +360,9 @@ cifs_create_get_file_info:
 		rc = cifs_get_inode_info_unix(&newinode, full_path, inode->i_sb,
 					      xid);
 	else {
+#else
+	{
+#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 		/* TODO: Add support for calling POSIX query info here, but passing in fid */
 		rc = cifs_get_inode_info(&newinode, full_path, buf, inode->i_sb,
 					 xid, fid);
@@ -389,17 +383,20 @@ cifs_create_get_file_info:
 		}
 	}
 
+#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 cifs_create_set_dentry:
+#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 	if (rc != 0) {
 		cifs_dbg(FYI, "Create worked, get_inode_info failed rc = %d\n",
 			 rc);
 		goto out_err;
 	}
 
-	if (S_ISDIR(newinode->i_mode)) {
-		rc = -EISDIR;
-		goto out_err;
-	}
+	if (newinode)
+		if (S_ISDIR(newinode->i_mode)) {
+			rc = -EISDIR;
+			goto out_err;
+		}
 
 	d_drop(direntry);
 	d_add(direntry, newinode);
@@ -519,7 +516,11 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 			server->ops->close(xid, tcon, &fid);
 		cifs_del_pending_open(&open);
 		rc = -ENOMEM;
+		goto out;
 	}
+
+	fscache_use_cookie(cifs_inode_cookie(file_inode(file)),
+			   file->f_mode & FMODE_WRITE);
 
 out:
 	cifs_put_tlink(tlink);
@@ -630,6 +631,7 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 	struct inode *newInode = NULL;
 	const char *full_path;
 	void *page;
+	int retry_count = 0;
 
 	xid = get_xid();
 
@@ -673,6 +675,7 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 	cifs_dbg(FYI, "Full path: %s inode = 0x%p\n",
 		 full_path, d_inode(direntry));
 
+again:
 	if (pTcon->posix_extensions)
 		rc = smb311_posix_get_inode_info(&newInode, full_path, parent_dir_inode->i_sb, xid);
 	else if (pTcon->unix_ext) {
@@ -687,6 +690,8 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 		/* since paths are not looked up by component - the parent
 		   directories are presumed to be good here */
 		renew_parental_timestamps(direntry);
+	} else if (rc == -EAGAIN && retry_count++ < 10) {
+		goto again;
 	} else if (rc == -ENOENT) {
 		cifs_set_time(direntry, jiffies);
 		newInode = NULL;

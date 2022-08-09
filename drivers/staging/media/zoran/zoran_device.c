@@ -148,71 +148,6 @@ int post_office_read(struct zoran *zr, unsigned int guest, unsigned int reg)
 }
 
 /*
- * detect guests
- */
-
-static void dump_guests(struct zoran *zr)
-{
-	if (zr36067_debug > 2) {
-		int i, guest[8];
-
-		/* do not print random data */
-		guest[0] = 0;
-
-		for (i = 1; i < 8; i++) /* Don't read jpeg codec here */
-			guest[i] = post_office_read(zr, i, 0);
-
-		pci_info(zr->pci_dev, "Guests: %*ph\n", 8, guest);
-	}
-}
-
-void detect_guest_activity(struct zoran *zr)
-{
-	int timeout, i, j, res, guest[8], guest0[8], change[8][3];
-	ktime_t t0, t1;
-
-	/* do not print random data */
-	guest[0] = 0;
-	guest0[0] = 0;
-
-	dump_guests(zr);
-	pci_info(zr->pci_dev, "Detecting guests activity, please wait...\n");
-	for (i = 1; i < 8; i++) /* Don't read jpeg codec here */
-		guest0[i] = guest[i] = post_office_read(zr, i, 0);
-
-	timeout = 0;
-	j = 0;
-	t0 = ktime_get();
-	while (timeout < 10000) {
-		udelay(10);
-		timeout++;
-		for (i = 1; (i < 8) && (j < 8); i++) {
-			res = post_office_read(zr, i, 0);
-			if (res != guest[i]) {
-				t1 = ktime_get();
-				change[j][0] = ktime_to_us(ktime_sub(t1, t0));
-				t0 = t1;
-				change[j][1] = i;
-				change[j][2] = res;
-				j++;
-				guest[i] = res;
-			}
-		}
-		if (j >= 8)
-			break;
-	}
-
-	pci_info(zr->pci_dev, "Guests: %*ph\n", 8, guest0);
-
-	if (j == 0) {
-		pci_info(zr->pci_dev, "No activity detected.\n");
-		return;
-	}
-	for (i = 0; i < j; i++)
-		pci_info(zr->pci_dev, "%6d: %d => 0x%02x\n", change[i][0], change[i][1], change[i][2]);
-}
-
-/*
  * JPEG Codec access
  */
 
@@ -304,7 +239,7 @@ static void zr36057_set_vfe(struct zoran *zr, int video_width, int video_height,
 	wa = tvn->wa;
 	ha = tvn->ha;
 
-	pci_info(zr->pci_dev, "set_vfe() - width = %d, height = %d\n", video_width, video_height);
+	pci_dbg(zr->pci_dev, "set_vfe() - width = %d, height = %d\n", video_width, video_height);
 
 	if (video_width < BUZ_MIN_WIDTH ||
 	    video_height < BUZ_MIN_HEIGHT ||
@@ -729,7 +664,7 @@ void zr36057_enable_jpg(struct zoran *zr, enum zoran_codec_mode mode)
 		zr36057_set_jpg(zr, mode);	// \P_Reset, ... Video param, FIFO
 
 		clear_interrupt_counters(zr);
-		pci_info(zr->pci_dev, "enable_jpg(MOTION_COMPRESS)\n");
+		pci_dbg(zr->pci_dev, "enable_jpg(MOTION_COMPRESS)\n");
 		break;
 	}
 
@@ -758,7 +693,7 @@ void zr36057_enable_jpg(struct zoran *zr, enum zoran_codec_mode mode)
 		zr36057_set_jpg(zr, mode);	// \P_Reset, ... Video param, FIFO
 
 		clear_interrupt_counters(zr);
-		pci_info(zr->pci_dev, "enable_jpg(MOTION_DECOMPRESS)\n");
+		pci_dbg(zr->pci_dev, "enable_jpg(MOTION_DECOMPRESS)\n");
 		break;
 
 	case BUZ_MODE_IDLE:
@@ -785,7 +720,7 @@ void zr36057_enable_jpg(struct zoran *zr, enum zoran_codec_mode mode)
 		decoder_call(zr, video, s_stream, 1);
 		encoder_call(zr, video, s_routing, 0, 0, 0);
 
-		pci_info(zr->pci_dev, "enable_jpg(IDLE)\n");
+		pci_dbg(zr->pci_dev, "enable_jpg(IDLE)\n");
 		break;
 	}
 }
@@ -879,7 +814,7 @@ static void zoran_reap_stat_com(struct zoran *zr)
 		if (zr->jpg_settings.tmp_dcm == 1)
 			i = (zr->jpg_dma_tail - zr->jpg_err_shift) & BUZ_MASK_STAT_COM;
 		else
-			i = ((zr->jpg_dma_tail - zr->jpg_err_shift) & 1) * 2 + 1;
+			i = ((zr->jpg_dma_tail - zr->jpg_err_shift) & 1) * 2;
 
 		stat_com = le32_to_cpu(zr->stat_com[i]);
 		if ((stat_com & 1) == 0) {
@@ -891,6 +826,11 @@ static void zoran_reap_stat_com(struct zoran *zr)
 		size = (stat_com & GENMASK(22, 1)) >> 1;
 
 		buf = zr->inuse[i];
+		if (!buf) {
+			spin_unlock_irqrestore(&zr->queued_bufs_lock, flags);
+			pci_err(zr->pci_dev, "No buffer at slot %d\n", i);
+			return;
+		}
 		buf->vbuf.vb2_buf.timestamp = ktime_get_ns();
 
 		if (zr->codec_mode == BUZ_MODE_MOTION_COMPRESS) {

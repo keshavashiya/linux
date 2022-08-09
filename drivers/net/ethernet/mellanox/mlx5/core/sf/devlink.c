@@ -8,6 +8,8 @@
 #include "mlx5_ifc_vhca_event.h"
 #include "vhca_event.h"
 #include "ecpf.h"
+#define CREATE_TRACE_POINTS
+#include "diag/sf_tracepoint.h"
 
 struct mlx5_sf {
 	struct devlink_port dl_port;
@@ -112,6 +114,7 @@ static void mlx5_sf_free(struct mlx5_sf_table *table, struct mlx5_sf *sf)
 {
 	mlx5_sf_id_erase(table, sf);
 	mlx5_sf_hw_table_sf_free(table->dev, sf->controller, sf->id);
+	trace_mlx5_sf_free(table->dev, sf->port_index, sf->controller, sf->hw_fn_id);
 	kfree(sf);
 }
 
@@ -136,10 +139,10 @@ static enum devlink_port_fn_state mlx5_sf_to_devlink_state(u8 hw_state)
 	switch (hw_state) {
 	case MLX5_VHCA_STATE_ACTIVE:
 	case MLX5_VHCA_STATE_IN_USE:
-	case MLX5_VHCA_STATE_TEARDOWN_REQUEST:
 		return DEVLINK_PORT_FN_STATE_ACTIVE;
 	case MLX5_VHCA_STATE_INVALID:
 	case MLX5_VHCA_STATE_ALLOCATED:
+	case MLX5_VHCA_STATE_TEARDOWN_REQUEST:
 	default:
 		return DEVLINK_PORT_FN_STATE_INACTIVE;
 	}
@@ -164,12 +167,12 @@ static bool mlx5_sf_is_active(const struct mlx5_sf *sf)
 	return sf->hw_state == MLX5_VHCA_STATE_ACTIVE || sf->hw_state == MLX5_VHCA_STATE_IN_USE;
 }
 
-int mlx5_devlink_sf_port_fn_state_get(struct devlink *devlink, struct devlink_port *dl_port,
+int mlx5_devlink_sf_port_fn_state_get(struct devlink_port *dl_port,
 				      enum devlink_port_fn_state *state,
 				      enum devlink_port_fn_opstate *opstate,
 				      struct netlink_ext_ack *extack)
 {
-	struct mlx5_core_dev *dev = devlink_priv(devlink);
+	struct mlx5_core_dev *dev = devlink_priv(dl_port->devlink);
 	struct mlx5_sf_table *table;
 	struct mlx5_sf *sf;
 	int err = 0;
@@ -192,20 +195,24 @@ sf_err:
 	return err;
 }
 
-static int mlx5_sf_activate(struct mlx5_core_dev *dev, struct mlx5_sf *sf)
+static int mlx5_sf_activate(struct mlx5_core_dev *dev, struct mlx5_sf *sf,
+			    struct netlink_ext_ack *extack)
 {
 	int err;
 
 	if (mlx5_sf_is_active(sf))
 		return 0;
-	if (sf->hw_state != MLX5_VHCA_STATE_ALLOCATED)
-		return -EINVAL;
+	if (sf->hw_state != MLX5_VHCA_STATE_ALLOCATED) {
+		NL_SET_ERR_MSG_MOD(extack, "SF is inactivated but it is still attached");
+		return -EBUSY;
+	}
 
 	err = mlx5_cmd_sf_enable_hca(dev, sf->hw_fn_id);
 	if (err)
 		return err;
 
 	sf->hw_state = MLX5_VHCA_STATE_ACTIVE;
+	trace_mlx5_sf_activate(dev, sf->port_index, sf->controller, sf->hw_fn_id);
 	return 0;
 }
 
@@ -221,12 +228,14 @@ static int mlx5_sf_deactivate(struct mlx5_core_dev *dev, struct mlx5_sf *sf)
 		return err;
 
 	sf->hw_state = MLX5_VHCA_STATE_TEARDOWN_REQUEST;
+	trace_mlx5_sf_deactivate(dev, sf->port_index, sf->controller, sf->hw_fn_id);
 	return 0;
 }
 
 static int mlx5_sf_state_set(struct mlx5_core_dev *dev, struct mlx5_sf_table *table,
 			     struct mlx5_sf *sf,
-			     enum devlink_port_fn_state state)
+			     enum devlink_port_fn_state state,
+			     struct netlink_ext_ack *extack)
 {
 	int err = 0;
 
@@ -234,7 +243,7 @@ static int mlx5_sf_state_set(struct mlx5_core_dev *dev, struct mlx5_sf_table *ta
 	if (state == mlx5_sf_to_devlink_state(sf->hw_state))
 		goto out;
 	if (state == DEVLINK_PORT_FN_STATE_ACTIVE)
-		err = mlx5_sf_activate(dev, sf);
+		err = mlx5_sf_activate(dev, sf, extack);
 	else if (state == DEVLINK_PORT_FN_STATE_INACTIVE)
 		err = mlx5_sf_deactivate(dev, sf);
 	else
@@ -244,11 +253,11 @@ out:
 	return err;
 }
 
-int mlx5_devlink_sf_port_fn_state_set(struct devlink *devlink, struct devlink_port *dl_port,
+int mlx5_devlink_sf_port_fn_state_set(struct devlink_port *dl_port,
 				      enum devlink_port_fn_state state,
 				      struct netlink_ext_ack *extack)
 {
-	struct mlx5_core_dev *dev = devlink_priv(devlink);
+	struct mlx5_core_dev *dev = devlink_priv(dl_port->devlink);
 	struct mlx5_sf_table *table;
 	struct mlx5_sf *sf;
 	int err;
@@ -265,7 +274,7 @@ int mlx5_devlink_sf_port_fn_state_set(struct devlink *devlink, struct devlink_po
 		goto out;
 	}
 
-	err = mlx5_sf_state_set(dev, table, sf, state);
+	err = mlx5_sf_state_set(dev, table, sf, state, extack);
 out:
 	mlx5_sf_table_put(table);
 	return err;
@@ -289,6 +298,7 @@ static int mlx5_sf_add(struct mlx5_core_dev *dev, struct mlx5_sf_table *table,
 	if (err)
 		goto esw_err;
 	*new_port_index = sf->port_index;
+	trace_mlx5_sf_add(dev, sf->port_index, sf->controller, sf->hw_fn_id, new_attr->sfnum);
 	return 0;
 
 esw_err:
@@ -319,7 +329,7 @@ mlx5_sf_new_check_attr(struct mlx5_core_dev *dev, const struct devlink_port_new_
 		NL_SET_ERR_MSG_MOD(extack, "External controller is unsupported");
 		return -EOPNOTSUPP;
 	}
-	if (new_attr->pfnum != PCI_FUNC(dev->pdev->devfn)) {
+	if (new_attr->pfnum != mlx5_get_dev_index(dev)) {
 		NL_SET_ERR_MSG_MOD(extack, "Invalid pfnum supplied");
 		return -EOPNOTSUPP;
 	}
@@ -438,6 +448,8 @@ static int mlx5_sf_vhca_event(struct notifier_block *nb, unsigned long opcode, v
 	update = mlx5_sf_state_update_check(sf, event->new_vhca_state);
 	if (update)
 		sf->hw_state = event->new_vhca_state;
+	trace_mlx5_sf_update_state(table->dev, sf->port_index, sf->controller,
+				   sf->hw_fn_id, sf->hw_state);
 sf_err:
 	mutex_unlock(&table->sf_state_lock);
 	mlx5_sf_table_put(table);
@@ -472,7 +484,7 @@ static void mlx5_sf_table_disable(struct mlx5_sf_table *table)
 		return;
 
 	/* Balances with refcount_set; drop the reference so that new user cmd cannot start
-	 * and new vhca event handler cannnot run.
+	 * and new vhca event handler cannot run.
 	 */
 	mlx5_sf_table_put(table);
 	wait_for_completion(&table->disable_complete);
@@ -489,7 +501,7 @@ static int mlx5_sf_esw_event(struct notifier_block *nb, unsigned long event, voi
 	case MLX5_ESWITCH_OFFLOADS:
 		mlx5_sf_table_enable(table);
 		break;
-	case MLX5_ESWITCH_NONE:
+	case MLX5_ESWITCH_LEGACY:
 		mlx5_sf_table_disable(table);
 		break;
 	default:

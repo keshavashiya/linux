@@ -246,7 +246,8 @@ static irqreturn_t exynos_eint_gpio_irq(int irq, void *data)
 {
 	struct samsung_pinctrl_drv_data *d = data;
 	struct samsung_pin_bank *bank = d->pin_banks;
-	unsigned int svc, group, pin, virq;
+	unsigned int svc, group, pin;
+	int ret;
 
 	svc = readl(bank->eint_base + EXYNOS_SVC_OFFSET);
 	group = EXYNOS_SVC_GROUP(svc);
@@ -256,10 +257,10 @@ static irqreturn_t exynos_eint_gpio_irq(int irq, void *data)
 		return IRQ_HANDLED;
 	bank += (group - 1);
 
-	virq = irq_linear_revmap(bank->irq_domain, pin);
-	if (!virq)
+	ret = generic_handle_domain_irq(bank->irq_domain, pin);
+	if (ret)
 		return IRQ_NONE;
-	generic_handle_irq(virq);
+
 	return IRQ_HANDLED;
 }
 
@@ -306,7 +307,7 @@ __init int exynos_eint_gpio_init(struct samsung_pinctrl_drv_data *d)
 		}
 		bank->irq_chip->chip.name = bank->name;
 
-		bank->irq_domain = irq_domain_add_linear(bank->of_node,
+		bank->irq_domain = irq_domain_create_linear(bank->fwnode,
 				bank->nr_pins, &exynos_eint_irqd_ops, bank);
 		if (!bank->irq_domain) {
 			dev_err(dev, "gpio irq domain add failed\n");
@@ -343,7 +344,8 @@ static int exynos_wkup_irq_set_wake(struct irq_data *irqd, unsigned int on)
 	struct samsung_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
 	unsigned long bit = 1UL << (2 * bank->eint_offset + irqd->hwirq);
 
-	pr_info("wake %s for irq %d\n", on ? "enabled" : "disabled", irqd->irq);
+	pr_info("wake %s for irq %u (%s-%lu)\n", on ? "enabled" : "disabled",
+		irqd->irq, bank->name, irqd->hwirq);
 
 	if (!on)
 		*our_chip->eint_wake_mask_value |= bit;
@@ -464,6 +466,10 @@ static const struct of_device_id exynos_wkup_irq_ids[] = {
 			.data = &exynos4210_wkup_irq_chip },
 	{ .compatible = "samsung,exynos7-wakeup-eint",
 			.data = &exynos7_wkup_irq_chip },
+	{ .compatible = "samsung,exynos850-wakeup-eint",
+			.data = &exynos7_wkup_irq_chip },
+	{ .compatible = "samsung,exynosautov9-wakeup-eint",
+			.data = &exynos7_wkup_irq_chip },
 	{ }
 };
 
@@ -473,12 +479,10 @@ static void exynos_irq_eint0_15(struct irq_desc *desc)
 	struct exynos_weint_data *eintd = irq_desc_get_handler_data(desc);
 	struct samsung_pin_bank *bank = eintd->bank;
 	struct irq_chip *chip = irq_desc_get_chip(desc);
-	int eint_irq;
 
 	chained_irq_enter(chip, desc);
 
-	eint_irq = irq_linear_revmap(bank->irq_domain, eintd->irq);
-	generic_handle_irq(eint_irq);
+	generic_handle_domain_irq(bank->irq_domain, eintd->irq);
 
 	chained_irq_exit(chip, desc);
 }
@@ -490,7 +494,7 @@ static inline void exynos_irq_demux_eint(unsigned int pend,
 
 	while (pend) {
 		irq = fls(pend) - 1;
-		generic_handle_irq(irq_find_mapping(domain, irq));
+		generic_handle_domain_irq(domain, irq);
 		pend &= ~(1 << irq);
 	}
 }
@@ -561,7 +565,7 @@ __init int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 		}
 		bank->irq_chip->chip.name = bank->name;
 
-		bank->irq_domain = irq_domain_add_linear(bank->of_node,
+		bank->irq_domain = irq_domain_create_linear(bank->fwnode,
 				bank->nr_pins, &exynos_eint_irqd_ops, bank);
 		if (!bank->irq_domain) {
 			dev_err(dev, "wkup irq domain add failed\n");
@@ -569,7 +573,7 @@ __init int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 			return -ENXIO;
 		}
 
-		if (!of_find_property(bank->of_node, "interrupts", NULL)) {
+		if (!fwnode_property_present(bank->fwnode, "interrupts")) {
 			bank->eint_type = EINT_TYPE_WKUP_MUX;
 			++muxed_banks;
 			continue;
@@ -584,7 +588,7 @@ __init int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 		}
 
 		for (idx = 0; idx < bank->nr_pins; ++idx) {
-			irq = irq_of_parse_and_map(bank->of_node, idx);
+			irq = irq_of_parse_and_map(to_of_node(bank->fwnode), idx);
 			if (!irq) {
 				dev_err(dev, "irq number for eint-%s-%d not found\n",
 							bank->name, idx);
